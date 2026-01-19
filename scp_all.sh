@@ -12,7 +12,7 @@ SRC_PATH="$1"
 DST_PATH="$2"
 
 ## 전역변수 ##
-SERVERS=(sn1 sn2 sn3)
+SERVERS=(sn1 sn2 sn3 m1 m2 s1)
 
 ## SCP 실행 ##
 for SERVER in "${SERVERS[@]}";

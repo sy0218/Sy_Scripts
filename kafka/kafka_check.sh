@@ -9,14 +9,14 @@ echo "   Kafka 접속 정보 설정"
 echo "------------------------------------------"
 
 # 1. Kafka Bootstrap Server 입력 받기
-read -p "Kafka Bootstrap Server를 입력하세요 (예: 192.168.56.60:9092): " BOOTSTRAP_SERVER
+read -p "Kafka Bootstrap Server를 입력하세요 (예: 192.168.122.60:9092): " BOOTSTRAP_SERVER
 if [ -z "${BOOTSTRAP_SERVER}" ]; then
     log_error "Bootstrap Server 주소가 입력되지 않았습니다."
     exit 1
 fi
 
 # 2. Schema Registry URL 입력 받기
-read -p "Schema Registry URL을 입력하세요 (예: http://192.168.56.60:8081): " SCHEMA_REGISTRY_URL
+read -p "Schema Registry URL을 입력하세요 (예: http://192.168.122.60:8081): " SCHEMA_REGISTRY_URL
 if [ -z "${SCHEMA_REGISTRY_URL}" ]; then
     log_error "Schema Registry URL이 입력되지 않았습니다."
     exit 1
