@@ -65,7 +65,7 @@ while true; do
         5)
             read -p "데이터를 확인할 토픽명을 입력하세요: " target_topic
             if [ -z "${target_topic}" ]; then log_error "토픽명 누락"; continue; fi
-            kafka-console-consumer.sh --bootstrap-server "${BOOTSTRAP_SERVER}" --topic "${target_topic}" --from-beginning --max-messages 1 --timeout-ms 5000 || log_error "데이터 없음"
+            kafka-console-consumer.sh --bootstrap-server "${BOOTSTRAP_SERVER}" --topic "${target_topic}" --from-beginning --max-messages 1 --timeout-ms 10000 || log_error "데이터 없음"
             ;;
         6)
             read -p "삭제 및 재생성할 토픽명을 입력하세요: " target_topic

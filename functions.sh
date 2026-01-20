@@ -1,4 +1,6 @@
 #!/usr/bin/bash
+. /etc/sy_script
+. ${Sy_Dir}/Sy_Scripts/conf/server.properties
 
 # ----------------------------------------
 # INFO 로그
@@ -69,4 +71,11 @@ run_redis() {
     shift 2  # 앞의 인자 2개(컨테이너, 비번)를 제거하고 나머지($@)를 명령어 인자로 사용
 
     docker exec -i "${CONTAINER}" redis-cli -a "${PASS}" "$@" 2>/dev/null
+}
+
+# ----------------------------------------
+# PostgreSQL 쿼리
+# ----------------------------------------
+job_sql_exec() {
+	PGPASSWORD=$job_PASSWORD psql -h $job_HOST -p $job_PORT -U $job_USER -d $job_DB -c "$1" -At
 }

@@ -43,6 +43,7 @@ while true; do
     echo "5) 데이터 일부 조회 (SSCAN)"
     echo "6) 특정 값 존재 여부 확인 (SISMEMBER)"
     echo "7) 키 삭제 (DEL)"
+    echo "8) 키 메모리 사용량 확인 (MB)"
     echo "q) 종료"
     echo "------------------------------------------"
     read -p "메뉴 번호를 선택하세요: " choice
@@ -106,6 +107,23 @@ while true; do
                 if [ "$confirm" = "y" ]; then
                     log_info "${key_name} 삭제 완료"
                     run_redis "${CONTAINER_NAME}" "${REDIS_PASS}" DEL "${key_name}"
+                fi
+            else
+                log_error "Key 누락"
+            fi
+            ;;
+        8)
+            read -p "메모리 사용량을 확인할 Redis Key를 입력하세요: " key_name
+            if [ -n "${key_name}" ]; then
+                log_info "${key_name} 메모리 사용량 확인 (bytes)"
+                RESULT=$(run_redis "${CONTAINER_NAME}" "${REDIS_PASS}" MEMORY USAGE "${key_name}")
+
+                if [ -z "$RESULT" ] || [ "$RESULT" = "(nil)" ]; then
+                    echo ">> 키가 존재하지 않거나 메모리 정보를 가져올 수 없습니다."
+                else
+                    echo ">> ${key_name} memory usage: ${RESULT} bytes"
+                    echo ">> 약 $(echo "scale=2; ${RESULT}/1024" | bc) KB"
+                    echo ">> 약 $(echo "scale=2; ${RESULT}/1024/1024" | bc) MB"
                 fi
             else
                 log_error "Key 누락"

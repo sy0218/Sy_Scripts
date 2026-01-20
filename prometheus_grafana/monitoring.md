@@ -92,7 +92,8 @@ services:
     ports:
       - "9090:9090"
     command:
-      - "--storage.tsdb.retention.time=3d"
+      - "--storage.tsdb.retention.time=2d"
+      - "--config.file=/etc/prometheus/prometheus.yml"
 
   grafana:
     image: grafana/grafana:latest
@@ -110,10 +111,7 @@ global:
 scrape_configs:
   - job_name: 'node_exporter'
     static_configs:
-      - targets: 
-          - '192.168.56.60:9100'
-          - '192.168.56.61:9100'
-          - '192.168.56.62:9100'
+      - targets: ['192.168.122.59:9100', '192.168.122.60:9100', '192.168.122.61:9100', '192.168.122.62:9100', '192.168.122.63:9100', '192.168.122.64:9100', '192.168.122.65:9100']
 ```
 ##### 🔹 targets에 모니터링할 서버 IP:9100 추가
 ---
