@@ -1,11 +1,17 @@
-#!/usr/bin/bash
-. /etc/sy_script
-. ${Sy_Dir}/Sy_Scripts/functions.sh
+#!/bin/bash
+
+# 환경변수 로드
+set -a
+. ./.env
+set +a
+
+# 공통 함수 로드
+. ${MY_DIR}/Sy_Scripts/functions.sh
 
 
 ## 전역변수 ##
-SERVERS=(sn1 sn2 sn3 m1 m2 s1)
-ALL_SERVERS=(ap sn1 sn2 sn3 m1 m2 s1)
+SERVERS=(s1 s2)
+ALL_SERVERS=(ap s1 s2)
 
 for SERVER in "${SERVERS[@]}";
 do
