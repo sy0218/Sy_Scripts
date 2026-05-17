@@ -1,6 +1,12 @@
-#!/usr/bin/bash
-. /etc/sy_script
-. ${Sy_Dir}/Sy_Scripts/functions.sh
+#!/bin/bash
+
+# 환경변수 로드
+set -a
+. ./.env
+set +a
+
+# 공통 함수 로드
+. ${MY_DIR}/Sy_Scripts/functions.sh
 
 # ===========================
 # 전역변수
@@ -19,4 +25,3 @@ if [ -d "$LOG_DIR" ]; then
 else
     log_info "[ERROR] 디렉토리가 존재하지 않습니다: ${LOG_DIR}"
 fi
-
