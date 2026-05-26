@@ -1,0 +1,22 @@
+#!/bin/bash
+# 관측성 스택 헬스체크
+PROM_URL="http://localhost:9090"
+LOKI_URL="http://localhost:3100"
+GRAFANA_URL="http://localhost:3000"
+ALLOY_URL="http://localhost:9101"
+PG_EXPORTER_URL="http://localhost:9187"
+
+echo "=== 1. Prometheus 타겟 상태 ==="
+curl -s "${PROM_URL}/api/v1/targets" | python3 -c "import sys,json; d=json.load(sys.stdin); [print(f\"  {t['labels'].get('job'):20} {t['scrapeUrl']:45} -> {t['health']}\") for t in d['data']['activeTargets']]" 2>/dev/null || echo "  (파싱 실패 / Prometheus 응답 확인 필요)"
+echo ""
+echo "=== 2. Loki ready ==="
+curl -s "${LOKI_URL}/ready"
+echo ""
+echo "=== 3. Grafana health ==="
+curl -s "${GRAFANA_URL}/api/health"
+echo ""
+echo "=== 4. Alloy 메트릭 엔드포인트 (host:9101) ==="
+curl -s "${ALLOY_URL}/metrics" | head -3 || echo "  (응답 없음)"
+echo ""
+echo "=== 5. postgres-exporter pg_up ==="
+curl -s "${PG_EXPORTER_URL}/metrics" | grep -E "^pg_up"
