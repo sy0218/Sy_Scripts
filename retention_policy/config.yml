@@ -2,7 +2,7 @@
 
 harbor:
   status: "ON"
-  url: "http://192.168.0.221:8080"
+  url: "http://192.168.56.60:8888"
   user: "admin"
   password: "admin"
   # cron (6필드, 초 포함)
@@ -18,7 +18,7 @@ harbor:
 
 gitlab:
   status: "ON"
-  url: "http://gitlab.ds-etrade.co.kr"
-  private_token: "glpat-MgpUaSgk6gY39_UIh_0AEm86MQp1OngH.01.0w1ekvyhp"
-  project_path: "syyoon77/dsai-platform"
+  url: "https://gitlab.com"
+  private_token: "glpat-TJJeue6BU-QPFVH0apF1mmM6MQpvOjEKdTpteGx2Mg8.01.170wizixj"
+  project_path: "sy0218/jsy_project"
   retention_count: 5

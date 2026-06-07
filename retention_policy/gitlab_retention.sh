@@ -34,7 +34,9 @@ if (( total_count <= GITLAB_RETENTION_COUNT )); then
     exit 0
 fi
 
-deleted=0; skipped=0; failed=0
+deleted=0
+skipped=0
+failed=0
 
 is_active_status() {
     case "$1" in
@@ -43,11 +45,10 @@ is_active_status() {
     esac
 }
 
-jq -r ".[$GITLAB_RETENTION_COUNT:][] | [.id, .status, .ref] | @tsv" <<< "$response" |
 while IFS=$'\t' read -r id status ref; do
     if is_active_status "$status"; then
         echo "[SKIP] #$id ($status / $ref)"
-        ((skipped++))
+        ((++skipped))
         continue
     fi
 
@@ -58,12 +59,14 @@ while IFS=$'\t' read -r id status ref; do
 
     if [[ "$code" == "204" ]]; then
         echo "[OK] #$id deleted"
-        ((deleted++))
+        ((++deleted))
     else
         echo "[FAIL] #$id code=$code" >&2
-        ((failed++))
+        ((++failed))
     fi
-done
+done < <(
+    jq -r ".[$GITLAB_RETENTION_COUNT:][] | [.id, .status, .ref] | @tsv" <<< "$response"
+)
 
-echo ""
+echo
 echo "[DONE] deleted=$deleted skipped=$skipped failed=$failed"
