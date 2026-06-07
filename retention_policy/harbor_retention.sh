@@ -2,36 +2,39 @@
 set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/.env"
+CONFIG_FILE="${SCRIPT_DIR}/config.yml"
 
-# --- 필수 환경변수 확인 -------------------------------------------------
-for v in HARBOR_URL HARBOR_USER HARBOR_PASSWORD HARBOR_RETENTION_MAP; do
-    if [[ -z "${!v}" ]]; then
-        echo "[ERROR] env 변수 '$v' 가 비어있습니다. .env 확인하세요." >&2
+# YAML에서 harbor 설정 로드
+HARBOR_URL=$(yq e '.harbor.url' "$CONFIG_FILE")
+HARBOR_USER=$(yq e '.harbor.user' "$CONFIG_FILE")
+HARBOR_PASSWORD=$(yq e '.harbor.password' "$CONFIG_FILE")
+RETENTION_CRON=$(yq e '.harbor.retention_cron' "$CONFIG_FILE")
+HARBOR_GC_CRON=$(yq e '.harbor.gc_cron' "$CONFIG_FILE")
+
+# 필수 환경변수 확인
+for v in HARBOR_URL HARBOR_USER HARBOR_PASSWORD; do
+    if [[ -z "${!v}" || "${!v}" == "null" ]]; then
+        echo "[ERROR] '$v' 가 비어있습니다. config.yml을 확인하세요." >&2
         exit 1
     fi
 done
 
-# 스케줄 cron (6필드, 초 포함). 비우면 "None"(수동 실행). 예: "0 0 0 * * *" = 매일 0시
-RETENTION_CRON="${RETENTION_CRON:-}"
+# null 값 처리 (비어있으면 빈값으로 대체)
+[[ "$RETENTION_CRON" == "null" ]] && RETENTION_CRON=""
+[[ "$HARBOR_GC_CRON" == "null" ]] && HARBOR_GC_CRON=""
 
-IFS=',' read -ra ITEMS <<< "$HARBOR_RETENTION_MAP"
-
-# HARBOR_RETENTION_MAP 에서 프로젝트명 -> 유지 개수 조회
+# HARBOR_RETENTION_MAP 대체: YAML 배열에서 project 일치하는 keep 값 가져오기
 function get_keep_last() {
     local name=$1
-    for item in "${ITEMS[@]}"; do
-        local project keep
-        project=$(echo "$item" | cut -d: -f1 | xargs)   # 앞뒤 공백 제거
-        keep=$(echo "$item" | cut -d: -f2 | xargs)
-        if [[ "$project" == "$name" ]]; then
-            echo "$keep"
-            return
-        fi
-    done
+    # yq로 해당 project를 가진 요소의 keep 값 추출
+    local keep
+    keep=$(yq e ".harbor.retention_map[] | select(.project == \"$name\") | .keep" "$CONFIG_FILE")
+    if [[ -n "$keep" && "$keep" != "null" ]]; then
+        echo "$keep"
+    fi
 }
 
-# 공통 curl 래퍼: 본문과 HTTP 상태코드를 분리해서 전역변수에 담음
+# 공통 curl 래퍼
 RESP_BODY=""
 RESP_CODE=""
 function harbor_curl() {
@@ -52,8 +55,7 @@ if [[ "$RESP_CODE" != "200" ]]; then
 fi
 PROJECTS="$RESP_BODY"
 
-echo "$PROJECTS" | jq -c '.[]' | while read -r project
-do
+echo "$PROJECTS" | jq -c '.[]' | while read -r project; do
     PROJECT_ID=$(echo "$project" | jq -r '.project_id')
     PROJECT_NAME=$(echo "$project" | jq -r '.name')
     echo "----------------------------------"
@@ -64,14 +66,14 @@ do
         echo "[SKIP] no retention config"
         continue
     fi
-    # 숫자인지 검증
+    
     if ! [[ "$KEEP_LAST" =~ ^[0-9]+$ ]]; then
         echo "[ERROR] KEEP_LAST 값이 숫자가 아님: '$KEEP_LAST' -> 건너뜀" >&2
         continue
     fi
     echo "KEEP_LAST = $KEEP_LAST"
 
-    # 정책 본문 (POST/PUT 공용)
+    # 정책 본문
     PAYLOAD=$(cat <<EOF
 {
   "algorithm":"or",
@@ -100,12 +102,10 @@ do
 EOF
 )
 
-    # 이미 retention 정책이 있는지 확인 (프로젝트당 1개만 가능)
     harbor_curl "${HARBOR_URL}/api/v2.0/projects/${PROJECT_ID}"
     RETENTION_ID=$(echo "$RESP_BODY" | jq -r '.metadata.retention_id // empty')
 
     if [[ -n "$RETENTION_ID" ]]; then
-        # 기존 정책 갱신 (재실행해도 안전)
         echo "기존 정책(id=$RETENTION_ID) 업데이트..."
         harbor_curl -X PUT \
             -H "Content-Type: application/json" \
@@ -113,7 +113,6 @@ EOF
             -d "$PAYLOAD"
         SUCCESS_CODE="200"
     else
-        # 신규 정책 생성
         echo "신규 정책 생성..."
         harbor_curl -X POST \
             -H "Content-Type: application/json" \
@@ -129,6 +128,48 @@ EOF
         echo "$RESP_BODY" >&2
     fi
 done
+
+echo "----------------------------------"
+echo "retention 완료."
+
+# --- GC 스케줄 ---------------------------
+if [[ -n "$HARBOR_GC_CRON" ]]; then
+    echo "----------------------------------"
+    echo "GC 스케줄 설정: cron='${HARBOR_GC_CRON}'"
+
+    GC_PAYLOAD=$(cat <<EOF
+{
+  "schedule":{ "type":"Custom", "cron":"${HARBOR_GC_CRON}" },
+  "parameters":{ "delete_untagged":true, "dry_run":false }
+}
+EOF
+)
+
+    harbor_curl -X PUT \
+        -H "Content-Type: application/json" \
+        "${HARBOR_URL}/api/v2.0/system/gc/schedule" \
+        -d "$GC_PAYLOAD"
+
+    if [[ "$RESP_CODE" == "404" || "$RESP_CODE" == "400" ]]; then
+        echo "기존 GC 스케줄 없음 -> 신규 생성(POST)..."
+        harbor_curl -X POST \
+            -H "Content-Type: application/json" \
+            "${HARBOR_URL}/api/v2.0/system/gc/schedule" \
+            -d "$GC_PAYLOAD"
+    fi
+
+    if [[ "$RESP_CODE" == "200" || "$RESP_CODE" == "201" ]]; then
+        echo "[OK] GC 스케줄 적용 완료 (HTTP $RESP_CODE)"
+    elif [[ "$RESP_CODE" == "403" ]]; then
+        echo "[FAIL] GC 스케줄 실패: admin 권한 필요 (HTTP 403). HARBOR_USER 확인." >&2
+        echo "$RESP_BODY" >&2
+    else
+        echo "[FAIL] GC 스케줄 적용 실패 (HTTP $RESP_CODE)" >&2
+        echo "$RESP_BODY" >&2
+    fi
+else
+    echo "[SKIP] HARBOR_GC_CRON 미설정 -> GC 스케줄 건너뜀"
+fi
 
 echo "----------------------------------"
 echo "완료."

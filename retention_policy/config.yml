@@ -1,0 +1,24 @@
+# Retention Policy Configuration
+
+harbor:
+  status: "ON"
+  url: "http://192.168.0.221:8080"
+  user: "admin"
+  password: "admin"
+  # cron (6필드, 초 포함)
+  retention_cron: "0 0 */2 * * *"
+  gc_cron: "0 0 3 * * *"
+  # 프로젝트별 유지 개수 매핑
+  retention_map:
+    - project: "test-platform"
+      keep: 3
+    # 추가 필요한 경우 아래처럼 나열 가능
+    # - project: "another-project"
+    #   keep: 5
+
+gitlab:
+  status: "ON"
+  url: "http://gitlab.ds-etrade.co.kr"
+  private_token: "glpat-MgpUaSgk6gY39_UIh_0AEm86MQp1OngH.01.0w1ekvyhp"
+  project_path: "syyoon77/dsai-platform"
+  retention_count: 5

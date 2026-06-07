@@ -1,0 +1,48 @@
+#!/bin/bash
+set -euo pipefail
+
+# 전역 변수
+error_count=0
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="${SCRIPT_DIR}/config.yml"
+
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "[ERROR] Config file not found: $CONFIG_FILE" >&2
+    exit 1
+fi
+
+echo "[INFO] retention policy start"
+
+# yq를 이용해 상위 서비스 목록(harbor, gitlab)을 가져옵니다.
+services=$(yq e 'keys | .[]' "$CONFIG_FILE")
+
+for service in $services;
+do
+    # 각 서비스의 status 조회
+    status=$(yq e ".${service}.status" "$CONFIG_FILE")
+
+    if [[ "$status" != "ON" ]]; then
+        echo "[SKIP] $service retention OFF"
+        continue
+    fi
+
+    script="${SCRIPT_DIR}/${service}_retention.sh"
+
+    if [[ ! -f "$script" ]]; then
+        echo "[WARN] script not found: $script"
+        ((error_count++)) || true
+        continue
+    fi
+
+    echo "[INFO] $service retention 실행"
+
+    if bash "$script"; then
+        echo "[OK] $service 완료"
+    else
+        echo "[ERROR] $service 실패" >&2
+        ((error_count++)) || true
+    fi
+done
+
+echo "[INFO] retention policy done"
+echo "[RESULT] error_count=$error_count"

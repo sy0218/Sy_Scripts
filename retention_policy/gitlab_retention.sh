@@ -1,19 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 
-# ==========================================
-# .env 로드 (스크립트와 같은 디렉토리)
-# ==========================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/.env"
+CONFIG_FILE="${SCRIPT_DIR}/config.yml"
 
-# 필수 env 체크
-for v in GITLAB_PRIVATE_TOKEN GITLAB_PROJECT_PATH GITLAB_URL GITLAB_RETENTION_COUNT;
-do
-    [[ -z "${!v}" ]] && {
-        echo "[ERROR] $v is empty" >&2
+# YAML에서 gitlab 설정 로드
+GITLAB_URL=$(yq e '.gitlab.url' "$CONFIG_FILE")
+GITLAB_PRIVATE_TOKEN=$(yq e '.gitlab.private_token' "$CONFIG_FILE")
+GITLAB_PROJECT_PATH=$(yq e '.gitlab.project_path' "$CONFIG_FILE")
+GITLAB_RETENTION_COUNT=$(yq e '.gitlab.retention_count' "$CONFIG_FILE")
+
+# 필수 값 체크
+for v in GITLAB_PRIVATE_TOKEN GITLAB_PROJECT_PATH GITLAB_URL GITLAB_RETENTION_COUNT; do
+    if [[ -z "${!v}" || "${!v}" == "null" ]]; then
+        echo "[ERROR] $v is empty in config.yml" >&2
         exit 1
-    }
+    fi
 done
 
 SAFE_PROJECT_PATH="${GITLAB_PROJECT_PATH//\//%2F}"
@@ -25,7 +27,6 @@ response="$(curl -sS -H "PRIVATE-TOKEN: ${GITLAB_PRIVATE_TOKEN}" \
     "${BASE_URL}?per_page=100&sort=desc")"
 
 total_count="$(jq 'length' <<< "$response")"
-
 echo "[INFO] total: ${total_count}, keep: ${GITLAB_RETENTION_COUNT}"
 
 if (( total_count <= GITLAB_RETENTION_COUNT )); then
@@ -33,24 +34,17 @@ if (( total_count <= GITLAB_RETENTION_COUNT )); then
     exit 0
 fi
 
-deleted=0
-skipped=0
-failed=0
+deleted=0; skipped=0; failed=0
 
 is_active_status() {
     case "$1" in
-        running|pending|created|preparing|waiting_for_resource)
-            return 0
-            ;;
-        *)
-            return 1
-            ;;
+        running|pending|created|preparing|waiting_for_resource) return 0 ;;
+        *) return 1 ;;
     esac
 }
 
 jq -r ".[$GITLAB_RETENTION_COUNT:][] | [.id, .status, .ref] | @tsv" <<< "$response" |
 while IFS=$'\t' read -r id status ref; do
-
     if is_active_status "$status"; then
         echo "[SKIP] #$id ($status / $ref)"
         ((skipped++))
