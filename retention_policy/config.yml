@@ -11,7 +11,12 @@ harbor:
   # 프로젝트별 유지 개수 매핑
   retention_map:
     - project: "test-platform"
-      keep: 3
+      rules:
+        - repo: "backend"
+          keep: 3
+        - repo: "backend-cache"
+          keep: 1
+          only_untagged: true
     # 추가 필요한 경우 아래처럼 나열 가능
     # - project: "another-project"
     #   keep: 5

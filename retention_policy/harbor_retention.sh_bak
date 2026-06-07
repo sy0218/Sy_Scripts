@@ -4,7 +4,7 @@ set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/config.yml"
 
-# YAML에서 harbor 기본 설정 로드
+# YAML에서 harbor 설정 로드
 HARBOR_URL=$(yq e '.harbor.url' "$CONFIG_FILE")
 HARBOR_USER=$(yq e '.harbor.user' "$CONFIG_FILE")
 HARBOR_PASSWORD=$(yq e '.harbor.password' "$CONFIG_FILE")
@@ -19,8 +19,20 @@ for v in HARBOR_URL HARBOR_USER HARBOR_PASSWORD; do
     fi
 done
 
+# null 값 처리 (비어있으면 빈값으로 대체)
 [[ "$RETENTION_CRON" == "null" ]] && RETENTION_CRON=""
 [[ "$HARBOR_GC_CRON" == "null" ]] && HARBOR_GC_CRON=""
+
+# HARBOR_RETENTION_MAP 대체: YAML 배열에서 project 일치하는 keep 값 가져오기
+function get_keep_last() {
+    local name=$1
+    # yq로 해당 project를 가진 요소의 keep 값 추출
+    local keep
+    keep=$(yq e ".harbor.retention_map[] | select(.project == \"$name\") | .keep" "$CONFIG_FILE")
+    if [[ -n "$keep" && "$keep" != "null" ]]; then
+        echo "$keep"
+    fi
+}
 
 # 공통 curl 래퍼
 RESP_BODY=""
@@ -49,83 +61,59 @@ echo "$PROJECTS" | jq -c '.[]' | while read -r project; do
     echo "----------------------------------"
     echo "Project: $PROJECT_NAME ($PROJECT_ID)"
 
-    # 1. config.yml에서 현재 project에 해당하는 rules 배열을 JSON으로 추출
-    PROJECT_CONFIG_JSON=$(yq e ".harbor.retention_map[] | select(.project == \"$PROJECT_NAME\")" -o=json "$CONFIG_FILE")
-
-    if [[ -z "$PROJECT_CONFIG_JSON" || "$PROJECT_CONFIG_JSON" == "null" ]]; then
-        echo "[SKIP] 명시된 보관 설정(retention_map)이 없습니다."
+    KEEP_LAST=$(get_keep_last "$PROJECT_NAME")
+    if [[ -z "$KEEP_LAST" ]]; then
+        echo "[SKIP] no retention config"
         continue
     fi
+    
+    if ! [[ "$KEEP_LAST" =~ ^[0-9]+$ ]]; then
+        echo "[ERROR] KEEP_LAST 값이 숫자가 아님: '$KEEP_LAST' -> 건너뜀" >&2
+        continue
+    fi
+    echo "KEEP_LAST = $KEEP_LAST"
 
-    # 2. 개별 규칙들을 Harbor API 규격에 맞는 JSON Rule 배열로 동적 생성
-    HARBOR_RULES=$(echo "$PROJECT_CONFIG_JSON" | jq -c '
-      [ .rules[] | 
-        if .only_untagged == true then
-          (
-            # [규칙 A] 캐시 레포: 태그가 있는 것(**)은 개수 제한 없이 무조건 다 보관 (최대치 부여)
-            {
-              "action": "retain",
-              "template": "latestPushedK",
-              "params": { "latestPushedK": 99999 },
-              "scope_selectors": { "repository": [{ "kind": "doublestar", "decoration": "repoMatches", "pattern": .repo }] },
-              "tag_selectors": [{ "kind": "doublestar", "decoration": "matches", "pattern": "**" }]
-            },
-            # [규칙 B] 캐시 레포: 태그가 없는 것(untagged)만 설정된 keep 개수만큼 보관
-            {
-              "action": "retain",
-              "template": "latestPushedK",
-              "params": { "latestPushedK": (.keep | tonumber) },
-              "scope_selectors": { "repository": [{ "kind": "doublestar", "decoration": "repoMatches", "pattern": .repo }] },
-              "tag_selectors": [{ "kind": "doublestar", "decoration": "matches", "pattern": "untagged" }]
-            }
-          )
-        else
-          # [규칙 C] 일반 레포: 태그 유무 상관없이 전체 이미지 중 최신 keep 개수만큼 보관
-          {
-            "action": "retain",
-            "template": "latestPushedK",
-            "params": { "latestPushedK": (.keep | tonumber) },
-            "scope_selectors": { "repository": [{ "kind": "doublestar", "decoration": "repoMatches", "pattern": .repo }] },
-            "tag_selectors": [{ "kind": "doublestar", "decoration": "matches", "pattern": "**" }]
-          }
-        end
+    # 정책 본문
+    PAYLOAD=$(cat <<EOF
+{
+  "algorithm":"or",
+  "rules":[
+    {
+      "action":"retain",
+      "template":"latestPushedK",
+      "params":{ "latestPushedK":${KEEP_LAST} },
+      "scope_selectors":{
+        "repository":[
+          { "kind":"doublestar", "decoration":"repoMatches", "pattern":"**" }
+        ]
+      },
+      "tag_selectors":[
+        { "kind":"doublestar", "decoration":"matches", "pattern":"**" }
       ]
-    ')
+    }
+  ],
+  "trigger":{
+    "kind":"Schedule",
+    "settings":{ "cron":"${RETENTION_CRON}" },
+    "references":{}
+  },
+  "scope":{ "level":"project", "ref":${PROJECT_ID} }
+}
+EOF
+)
 
-    if [[ "$HARBOR_RULES" == "[]" || -z "$HARBOR_RULES" ]]; then
-        echo "[SKIP] 설정된 레포지토리 규칙이 없습니다."
-        continue
-    fi
-
-    # 3. 전체 페이로드 조립
-    PAYLOAD=$(jq -n \
-      --argjson rules "$HARBOR_RULES" \
-      --arg cron "$RETENTION_CRON" \
-      --argjson pid "$PROJECT_ID" \
-      '{
-        "algorithm": "or",
-        "rules": $rules,
-        "trigger": {
-          "kind": "Schedule",
-          "settings": { "cron": $cron },
-          "references": {}
-        },
-        "scope": { "level": "project", "ref": $pid }
-      }')
-
-    # 기존 정책 존재 여부 확인
     harbor_curl "${HARBOR_URL}/api/v2.0/projects/${PROJECT_ID}"
     RETENTION_ID=$(echo "$RESP_BODY" | jq -r '.metadata.retention_id // empty')
 
     if [[ -n "$RETENTION_ID" ]]; then
-        echo "기존 정책(id=$RETENTION_ID) 업데이트 중..."
+        echo "기존 정책(id=$RETENTION_ID) 업데이트..."
         harbor_curl -X PUT \
             -H "Content-Type: application/json" \
             "${HARBOR_URL}/api/v2.0/retentions/${RETENTION_ID}" \
             -d "$PAYLOAD"
         SUCCESS_CODE="200"
     else
-        echo "신규 정책 생성 중..."
+        echo "신규 정책 생성..."
         harbor_curl -X POST \
             -H "Content-Type: application/json" \
             "${HARBOR_URL}/api/v2.0/retentions" \
@@ -134,26 +122,25 @@ echo "$PROJECTS" | jq -c '.[]' | while read -r project; do
     fi
 
     if [[ "$RESP_CODE" == "$SUCCESS_CODE" || "$RESP_CODE" == "200" ]]; then
-        echo "[OK] 정책 적용 완료 (HTTP $RESP_CODE)"
+        echo "[OK] 적용 완료 (HTTP $RESP_CODE)"
     else
-        echo "[FAIL] 정책 적용 실패 (HTTP $RESP_CODE)" >&2
+        echo "[FAIL] 적용 실패 (HTTP $RESP_CODE)" >&2
         echo "$RESP_BODY" >&2
     fi
 done
 
 echo "----------------------------------"
-echo "retention 정책 동기화 완료."
+echo "retention 완료."
 
-# --- GC 스케줄 설정 ---------------------------
+# --- GC 스케줄 ---------------------------
 if [[ -n "$HARBOR_GC_CRON" ]]; then
     echo "----------------------------------"
     echo "GC 스케줄 설정: cron='${HARBOR_GC_CRON}'"
 
-    # workers: 1 명시 및 안전을 위해 delete_untagged는 false 처리
     GC_PAYLOAD=$(cat <<EOF
 {
   "schedule":{ "type":"Custom", "cron":"${HARBOR_GC_CRON}" },
-  "parameters":{ "delete_untagged":false, "dry_run":false, "workers":1 }
+  "parameters":{ "delete_untagged":true, "dry_run":false }
 }
 EOF
 )
