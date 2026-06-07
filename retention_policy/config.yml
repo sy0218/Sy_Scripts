@@ -8,6 +8,7 @@ harbor:
   # cron (6필드, 초 포함)
   retention_cron: "0 0 */2 * * *"
   gc_cron: "0 0 3 * * *"
+  delete_untagged: true  # 태그 없는 아티팩트 가비지 컬렉션 허용 여부 (true/false)
   # 프로젝트별 유지 개수 매핑
   retention_map:
     - project: "test-platform"

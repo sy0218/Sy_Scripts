@@ -10,6 +10,7 @@ HARBOR_USER=$(yq e '.harbor.user' "$CONFIG_FILE")
 HARBOR_PASSWORD=$(yq e '.harbor.password' "$CONFIG_FILE")
 RETENTION_CRON=$(yq e '.harbor.retention_cron' "$CONFIG_FILE")
 HARBOR_GC_CRON=$(yq e '.harbor.gc_cron' "$CONFIG_FILE")
+HARBOR_GC_DELETE_UNTAGGED=$(yq e '.harbor.delete_untagged' "$CONFIG_FILE")
 
 # 필수 환경변수 확인
 for v in HARBOR_URL HARBOR_USER HARBOR_PASSWORD; do
@@ -21,6 +22,11 @@ done
 
 [[ "$RETENTION_CRON" == "null" ]] && RETENTION_CRON=""
 [[ "$HARBOR_GC_CRON" == "null" ]] && HARBOR_GC_CRON=""
+
+# config.yml에 설정이 없거나 null이면 기본값 false 처리
+if [[ "$HARBOR_GC_DELETE_UNTAGGED" == "null" || -z "$HARBOR_GC_DELETE_UNTAGGED" ]]; then
+    HARBOR_GC_DELETE_UNTAGGED="false"
+fi
 
 # 공통 curl 래퍼
 RESP_BODY=""
@@ -59,7 +65,7 @@ echo "$PROJECTS" | jq -c '.[]' | while read -r project; do
 
     # 2. 개별 규칙들을 Harbor API 규격에 맞는 JSON Rule 배열로 동적 생성
     HARBOR_RULES=$(echo "$PROJECT_CONFIG_JSON" | jq -c '
-      [ .rules[] | 
+      [ .rules[] |
         if .only_untagged == true then
           (
             # [규칙 A] 캐시 레포: 태그가 있는 것(**)은 개수 제한 없이 무조건 다 보관 (최대치 부여)
@@ -147,13 +153,13 @@ echo "retention 정책 동기화 완료."
 # --- GC 스케줄 설정 ---------------------------
 if [[ -n "$HARBOR_GC_CRON" ]]; then
     echo "----------------------------------"
-    echo "GC 스케줄 설정: cron='${HARBOR_GC_CRON}'"
+    echo "GC 스케줄 설정: cron='${HARBOR_GC_CRON}', delete_untagged=${HARBOR_GC_DELETE_UNTAGGED}"
 
-    # workers: 1 명시 및 안전을 위해 delete_untagged는 false 처리
+    # config.yml에서 가져온 delete_untagged 옵션을 주입
     GC_PAYLOAD=$(cat <<EOF
 {
   "schedule":{ "type":"Custom", "cron":"${HARBOR_GC_CRON}" },
-  "parameters":{ "delete_untagged":false, "dry_run":false, "workers":1 }
+  "parameters":{ "delete_untagged":${HARBOR_GC_DELETE_UNTAGGED}, "dry_run":false, "workers":1 }
 }
 EOF
 )
